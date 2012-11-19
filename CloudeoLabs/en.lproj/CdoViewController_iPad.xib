@@ -137,7 +137,7 @@
 						<int key="IBUIContentMode">7</int>
 						<string key="targetRuntimeIdentifier">IBIPadFramework</string>
 						<int key="IBUIContentVerticalAlignment">0</int>
-						<string key="IBUIText">dev04.saymama.com:7006/room1</string>
+						<string key="IBUIText">174.127.76.179:443/room1</string>
 						<int key="IBUIBorderStyle">3</int>
 						<reference key="IBUITextColor" ref="821843113"/>
 						<int key="IBUITextAlignment">1</int>
