@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4C4CC14A172E138F00EA9160 /* AddLive.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C4CC149172E138F00EA9160 /* AddLive.framework */; };
 		4C8F3BC916A94A6C00FAD2DE /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C8F3BC816A94A6C00FAD2DE /* UIKit.framework */; };
 		4C8F3BCB16A94A6C00FAD2DE /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C8F3BCA16A94A6C00FAD2DE /* Foundation.framework */; };
 		4C8F3BCD16A94A6C00FAD2DE /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C8F3BCC16A94A6C00FAD2DE /* CoreGraphics.framework */; };
@@ -34,7 +33,6 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		4C4CC149172E138F00EA9160 /* AddLive.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AddLive.framework; path = AddLive_iOS_SDK/AddLive.framework; sourceTree = "<group>"; };
 		4C8F3BC416A94A6C00FAD2DE /* AddLiveDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AddLiveDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C8F3BC816A94A6C00FAD2DE /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		4C8F3BCA16A94A6C00FAD2DE /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
@@ -86,7 +84,6 @@
 				4C8F3BC916A94A6C00FAD2DE /* UIKit.framework in Frameworks */,
 				4C8F3BCB16A94A6C00FAD2DE /* Foundation.framework in Frameworks */,
 				4C8F3BCD16A94A6C00FAD2DE /* CoreGraphics.framework in Frameworks */,
-				4C4CC14A172E138F00EA9160 /* AddLive.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -116,7 +113,6 @@
 		4C8F3BC716A94A6C00FAD2DE /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				4C4CC149172E138F00EA9160 /* AddLive.framework */,
 				4CC843EB171263CF00A9BC7A /* Security.framework */,
 				4C8F3C0B16A94C4A00FAD2DE /* MessageUI.framework */,
 				4C8F3C0916A94C3F00FAD2DE /* SystemConfiguration.framework */,
@@ -309,6 +305,7 @@
 					"\"$(SRCROOT)\"",
 					"\"$(SRCROOT)/../AddLive_iOS_SDK\"",
 					"\"$(SRCROOT)/AddLive_iOS_SDK\"",
+					"\"$(SRCROOT)/../iOS-Releases/beta_2.0.0.13/AddLive_iOS_SDK\"",
 				);
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "AddLiveDemo/AddLiveDemo-Prefix.pch";
@@ -331,6 +328,7 @@
 					"\"$(SRCROOT)\"",
 					"\"$(SRCROOT)/../AddLive_iOS_SDK\"",
 					"\"$(SRCROOT)/AddLive_iOS_SDK\"",
+					"\"$(SRCROOT)/../iOS-Releases/beta_2.0.0.13/AddLive_iOS_SDK\"",
 				);
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "AddLiveDemo/AddLiveDemo-Prefix.pch";
