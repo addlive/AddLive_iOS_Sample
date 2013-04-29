@@ -7,10 +7,7 @@
  */
 
 #import "CdoViewController.h"
-#import "AddLive/AddLiveAPI.h"
 #import "Reachability.h"
-
-#import <CommonCrypto/CommonDigest.h>
 
 #include <asl.h>
 #include <time.h>
@@ -23,8 +20,37 @@ NSString* LOG_FILE_TEMPLATE = @"log.XXXXXX";
 NSString* LOG_FILE_EMAIL = @"log.txt";
 char* LOG_KEY_SENDER = "AddLive_SDK";
 
-int CDO_SAMPLES_APP_ID = 1;
-NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
+int AL_SAMPLE_APP_ID = 1;
+NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
+
+//
+
+#define AUTO_ROTATE 0
+
+//
+
+@interface User : NSObject
+@property (nonatomic,copy) NSString* statsAudio;
+@property (nonatomic,copy) NSString* statsVideo;
+@property (nonatomic,copy) NSString* videoSinkId;
+@property (nonatomic,copy) NSString* screenSinkId;
+- (id) init;
+@end
+
+@implementation User
+- (id) init
+{
+    self = [super init];
+    if (self)
+    {
+        self.statsAudio = @"";
+	self.statsVideo = @"";
+	self.videoSinkId = @"";
+	self.screenSinkId = @"";
+    }
+    return self;
+}
+@end
 
 //
 
@@ -34,94 +60,183 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
     enum State
     {
         INIT,
-        INIT_SERVICE_LISTENER,
-	INIT_APPLICATION_ID,
-	DISCONNECTING,
         DISCONNECTED,
-	CONNECTING,
         CONNECTED,
-	HOLDING,
-	HELD
+        ONHOLD,
     };
 
     enum Sheet
     {
-        SHEET_AEC,
         SHEET_NS,
-        SHEET_AGC
+	SHEET_CAMERA,
     };
     
-    ALService*              _api;
+    ALService*              _service;
     enum State              _state;
-    NSMutableDictionary*    _downlinkStats;
+    BOOL                    _isBackgroundMode;
+    NSString*               _uplinkStatsAudio;
+    NSString*               _uplinkStatsVideo;
+    NSMutableDictionary*    _users;
     NSMutableArray*         _downlinkStatsRow;
-    NSArray*                _aecModes;
-    NSArray*                _nsModes;
-    NSArray*                _agcModes;
-    ALConnectionDescriptor* _connectionDescriptor;
-    bool                    _speakerState;
     Reachability*           _reachability;
     NetworkStatus           _networkStatus;
     UIAlertView*            _alert;
+    NSMutableDictionary*    _videoSinkToVideoView;
+    NSString*               _version;
+    NSArray*                _cameraDevices;
+    long long               _userId;
+    int                     _connectAttempts;
 }
 
-// actions
-- (void) connect;
-- (void) disconnect;
-- (void) hold;
-- (void) setAudioProperty:(NSInteger) index 
-			 :(NSString*) enable :(NSString*) mode;
-
 // responses
-- (void) onInit:(ALError*) err;
+- (void) onInitPlatform:(ALError*) err;
+- (void) onInitAddServiceListener:(ALError*) err;
+- (void) onInitGetVideoCaptureDeviceNames:(ALError*) err 
+				  devices:(NSArray*) devices;
 - (void) onConnect:(ALError*) err;
 - (void) onDisconnect:(ALError*) err;
+- (void) onReconnect:(ALError*) err;
 - (void) onHold:(ALError*) err;
-- (void) onSetAudioProperty:(ALError*) err;
+- (void) onSetNSMode:(ALError*) err;
 - (void) onSpeakerResponse:(ALError*) err;
+- (void) onSetVideoCaptureDevice:(ALError*) err;
+- (void) onStartLocalVideo:(ALError*) err
+	       videoSinkId:(NSString*) videoSinkId;
+- (void) onStopLocalVideo:(ALError*) err;
+- (void) onPublish:(ALError*) err;
+- (void) onUnpublish:(ALError*) err;
+- (void) onGetVersion:(ALError*) err 
+	      version:(NSString*) version;
+- (void) onNetworkTest:(ALError*) err 
+	       quality:(NSNumber*) quality;
+- (void) onSetAllowedSenders:(ALError*) err;
+- (void) onStartMeasuringStats:(ALError*) err;
 
-// service listeners
-- (void) connectionLost:(ALConnectionLostEvent*) event;
-- (void) userEvent:(ALUserStateChangedEvent*) event;
-- (void) mediaStream:(ALUserStateChangedEvent*) event;
-- (void) mediaStats:(ALMediaStatsEvent*) event;
-- (void) message:(ALMessageEvent*) event;
-- (void) mediaConnTypeChanged:(ALMediaConnTypeChangedEvent*) event;
-- (void) echo:(ALEchoEvent*) event;
-- (void) mediaInterrupt:(ALMediaInterruptEvent*) event;
+// private
+- (void) showError:(NSString*) errorMsg;
+- (void) showBusy:(NSString*) busyMsg;
+- (void) showReady;
+- (void) showInCall;
+- (void) connect;
+- (void) disconnect;
+- (void) reconnect;
+- (void) hold;
+- (void) showEmailView:(NSString*) filenameAttachment;
+- (void) audioStats:(ALMediaStatsEvent*) event;
+- (void) videoStats:(ALMediaStatsEvent*) event;
+- (void) lockUI;
+- (void) unlockUI:(BOOL) enableURL;
+- (NSString*) scopeId;
+- (BOOL) isURL;
+- (void) reloadDownlinkStats;
+- (void) cleanUpAfterDisconnect;
+- (void) selectVideo:(User*) user;
+- (void) putCallOnHold;
+- (void) startNetworkTest;
++ (char*) createTempFilename:(NSString*) template;
++ (void) writeLog:(NSFileHandle*) fh;
 
 // action sheets
-- (void) aecSheetClickedAtIndex:(NSInteger) index;
 - (void) nsSheetClickedAtIndex:(NSInteger) index;
-- (void) agcSheetClickedAtIndex:(NSInteger) index;
+- (void) cameraSheetClickedAtIndex:(NSInteger) index;
 
-//
-+ (char*) createTempFilename:(NSString*) template;
-+ (void)  writeLog:(NSFileHandle*) fh;
-- (void)  prepareEmail:(NSString*) filename;
-- (void)  onReachabilityChanged:(NSNotification*) note;
+// reachability
+- (void) onReachabilityChanged:(NSNotification*) note;
 
 @end
 
 @implementation CdoViewController
 
+@synthesize scrollView;
+@synthesize contentView;
 @synthesize buttonConnectDisconnect;
+@synthesize switchSpeaker;
+@synthesize switchPublishVideo;
+@synthesize switchPublishAudio;
 @synthesize labelStatus;
 @synthesize textFieldURL;
 @synthesize labelUplinkStats;
-@synthesize buttonAec;
 @synthesize buttonNs;
-@synthesize buttonAgc;
+@synthesize buttonCamera;
 @synthesize tableViewDownlinkStats;
+@synthesize viewVideo0;
+@synthesize viewVideo1;
+
+- (id) init
+{
+    self = [super init];
+    if (self)
+    {
+      _service = nil;	
+      _state = INIT;
+      _isBackgroundMode = NO;
+      _uplinkStatsAudio = nil;
+      _uplinkStatsVideo = nil;
+      _downlinkStatsRow = nil;
+      _users = nil;
+      _reachability = nil;
+      _networkStatus = NotReachable;
+      _alert = nil;
+      _videoSinkToVideoView = nil;
+      _version = nil;
+      _cameraDevices = nil;
+      _userId = 0;
+      _connectAttempts = 0;
+    }
+    return self;
+}
+
+- (void) dealloc
+{
+    [_cameraDevices release];
+    _cameraDevices = nil;
+
+    [_version release];
+    _version = nil;
+
+    [_videoSinkToVideoView release];
+    _videoSinkToVideoView = nil;
+
+    [_reachability release];
+    _reachability = nil;
+
+    [_downlinkStatsRow release];
+    _downlinkStatsRow = nil;
+
+    [_uplinkStatsAudio release];
+    _uplinkStatsAudio = nil;
+
+    [_uplinkStatsVideo release];
+    _uplinkStatsVideo = nil;
+    
+    [_users release];
+    _users = nil;
+
+    [_alert release];
+    _alert = nil;
+
+    [super dealloc];
+}
 
 - (void) viewDidLoad
 {
     [super viewDidLoad];
 
+    [self lockUI];
+
+    // set user id
+    srand(time(0));
+    _userId = 1 + (rand() % 1000);
+
+    // setup scroll view
+    [self.scrollView addSubview:self.contentView];
+    self.scrollView.contentSize = self.contentView.bounds.size;
+    self.switchSpeaker.on = NO;
+
+    _videoSinkToVideoView = [[NSMutableDictionary alloc] init];
+
     // connection type notification. onReachabilityChanged is called
-
     _reachability = [[Reachability reachabilityForInternetConnection] retain];  
-
     _networkStatus = [_reachability currentReachabilityStatus];
 
     [[NSNotificationCenter defaultCenter] addObserver:self 
@@ -130,56 +245,30 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
 
     [_reachability startNotifier];
 
-    // setup sheets for audio processing selection
-
-    _aecModes = [[NSArray alloc] initWithObjects:
-                 @"Disabled",
-                 @"Quiet Earpiece or Headset",
-                 @"Earpiece",
-                 @"Loud Earpiece",
-                 @"Speakerphone", 
-                 @"Loud Speakerphone",
-                 nil];
-    
-    _nsModes = [[NSArray alloc] initWithObjects:
-                @"Disabled",
-                @"Default", 
-                @"Conference",
-                @"Low Suppression",
-                @"Moderate Suppression",
-                @"High Suppression",
-                @"Very High Suppression",
-                nil];
-
-    _agcModes = [[NSArray alloc] initWithObjects:
-                 @"Disabled",
-                 @"Default",
-                 @"Adaptive Analog",
-                 @"Adaptive Digital",
-                 @"Fixed Digital",
-                 nil];
-    
-    // initialize variables to default state
-
+    //
     _state = INIT;
-    _speakerState = false;
+    _isBackgroundMode = NO;
+    _connectAttempts = 0;
     
-    _downlinkStats = [[NSMutableDictionary alloc] init];
     _downlinkStatsRow = [[NSMutableArray alloc] init];
+    _users = [[NSMutableDictionary alloc] init];
 
-    [labelStatus setText:@"Initializing ..."];
-    labelStatus.textColor = [UIColor cyanColor];
+    [self showBusy:@"Initializing ..."];
 
-    // initialize Cloudeo API. Cloudeo API calls back to onInit
+    // initialize AddLive API. API calls back to onInitPlatform
+    _service = [[ALService alloc] 
+		 initWithAppId:[NSNumber numberWithInt:AL_SAMPLE_APP_ID]
+			appKey:AL_SAMPLE_KEY
+		];
 
-    _api = [[ALService alloc] init];
-
-    ALInitOptions* options = [[ALInitOptions alloc] init];
+    ALInitOptions* options = [[[ALInitOptions alloc] init] autorelease];
 
     ALResponder* responder =
-        [[ALResponder alloc] init:@selector(onInit:):self];
-
-    [_api initPlatform:options:responder];
+      [[[ALResponder alloc] 
+	 initWithSelector:@selector(onInitPlatform:) withObject:self] 
+	autorelease];
+    [_service initPlatform:options
+		 responder:responder];
 
     NSLog(@"viewDidLoad");
 }
@@ -188,8 +277,10 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
 {
     [super viewDidUnload];
 
-    [_api releasePlatform];
-    _api = 0;
+    // release the API
+    [_service releasePlatform];
+    [_service release];
+    _service = nil;
     
     NSLog(@"viewDidUnload");
 }
@@ -197,9 +288,7 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
 - (BOOL) shouldAutorotateToInterfaceOrientation
 :(UIInterfaceOrientation)interfaceOrientation
 {
-    return NO;
-
-#if 0    
+#if AUTO_ROTATE
     if ([[UIDevice currentDevice] userInterfaceIdiom] 
 	== UIUserInterfaceIdiomPhone)
     {
@@ -210,21 +299,107 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
     {
         return YES;
     }
+#else
+    return NO;
 #endif    
 }
 
 - (BOOL) shouldAutorotate
 {
-    return NO; // TODO
+#if AUTO_ROTATE
+    return YES;
+#else
+    return NO;
+#endif
 }
 
 // called when connect/disconnect was pressed
 - (IBAction) onConnectDisconnect
 {
-    if (_state == DISCONNECTING || _state == DISCONNECTED)
+    if (_state == DISCONNECTED || _state == ONHOLD)
+    {
         [self connect];
+    }
     else
+    {
         [self disconnect];
+    }
+}
+
+// called when publish video state changed
+- (IBAction) onPublishVideo
+{
+    if (_state != CONNECTED)
+    {
+        return;
+    }
+
+    if (self.switchPublishVideo.isOn)
+    {
+        [self showBusy:@"Publishing video ..."];
+
+        ALResponder* responder =
+	  [[[ALResponder alloc] 
+	     initWithSelector:@selector(onPublish:)
+		   withObject:self] autorelease];
+
+	[_service publish:[self scopeId] 
+		     what:@"video"
+		  options:nil
+		responder:responder];
+    }
+    else
+    {
+        [self showBusy:@"Unpublishing video ..."];
+
+        ALResponder* responder =
+	  [[[ALResponder alloc] 
+	     initWithSelector:@selector(onUnpublish:)
+		   withObject:self] 
+	    autorelease];
+
+        [_service unpublish:[self scopeId]
+		       what:@"video"
+		  responder:responder];
+    }
+}
+
+// called when publish audio state changed
+- (IBAction) onPublishAudio
+{
+    if (_state != CONNECTED)
+    {
+        return;
+    }
+
+    if (self.switchPublishAudio.isOn)
+    {
+        [self showBusy:@"Publishing audio ..."];
+
+        ALResponder* responder =
+	  [[[ALResponder alloc] 
+	     initWithSelector:@selector(onPublish:)
+		   withObject:self] autorelease];
+
+	[_service publish:[self scopeId]
+		     what:@"audio"
+		  options:nil
+		responder:responder];
+    }
+    else
+    {
+        [self showBusy:@"Unpublishing audio ..."];
+
+        ALResponder* responder =
+	  [[[ALResponder alloc] 
+	     initWithSelector:@selector(onUnpublish:)
+		   withObject:self] 
+	    autorelease];
+
+        [_service unpublish:[self scopeId]
+		       what:@"audio"
+		  responder:responder];
+    }
 }
 
 // called when logs button was pressed
@@ -257,7 +432,7 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
 
     // attach file to email
 
-    [self prepareEmail:filename];
+    [self showEmailView:filename];
 
     if (! [[NSFileManager defaultManager] removeItemAtPath:filename error:nil])
       NSLog(@"cannot delete file");
@@ -272,39 +447,18 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
 // called when speaker button was pressed
 - (IBAction) onSpeaker
 {
-    if (_api == nil)
-        return;
-    
     ALResponder* responder =
-        [[ALResponder alloc] init:@selector(onSpeakerResponse:):self];
+      [[[ALResponder alloc] 
+	 initWithSelector:@selector(onSpeakerResponse:)
+	       withObject:self] 
+	autorelease];
 
-    [_api setProperty:@"global.dev.audio.enableSpeaker"
-     :[NSString stringWithFormat:@"%d", _speakerState]
-     :responder];
-}
-
-// called when AEC button pressed (disabled)
-- (IBAction) onAEC:(id) sender
-{
-    UIActionSheet* popupQuery = [[UIActionSheet alloc] 
-                                 initWithTitle:@"AEC" 
-                                 delegate:self 
-                                 cancelButtonTitle:nil
-                                 destructiveButtonTitle:nil
-                                 otherButtonTitles:nil];
-
-    for (int i=0; i<[_aecModes count]; i++)
-        [popupQuery addButtonWithTitle:[_aecModes objectAtIndex:i]];
-        
-    popupQuery.actionSheetStyle = UIActionSheetStyleBlackTranslucent;
-    popupQuery.tag = SHEET_AEC;
-    
-    [popupQuery showInView:self.view];
-    [popupQuery release];
+    [_service enableSpeaker:self.switchSpeaker.isOn
+		  responder:responder];
 }
 
 // called when NS button pressed
-- (IBAction) onNS:(id) sender
+- (IBAction) onNS
 {
     UIActionSheet* popupQuery = [[UIActionSheet alloc] 
                                  initWithTitle:@"NS" 
@@ -313,9 +467,13 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
                                  destructiveButtonTitle:nil
                                  otherButtonTitles:nil];
 
-    for (int i=0; i<[_nsModes count]; i++)
-        [popupQuery addButtonWithTitle:[_nsModes objectAtIndex:i]];
-    
+    NSArray* nsModes = [ALService getNSModes];
+
+    for (int i=0; i<[nsModes count]; i++)
+    {
+        [popupQuery addButtonWithTitle:[nsModes objectAtIndex:i]];
+    }
+
     popupQuery.actionSheetStyle = UIActionSheetStyleBlackTranslucent;
     popupQuery.tag = SHEET_NS;
     
@@ -323,39 +481,109 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
     [popupQuery release];
 }
 
-// called when AGC button pressed
-- (IBAction) onAGC:(id) sender
+// called when Camera button pressed
+- (IBAction) onCamera
 {
     UIActionSheet* popupQuery = [[UIActionSheet alloc] 
-                                 initWithTitle:@"AGC" 
-                                 delegate:self 
-                                 cancelButtonTitle:nil
-                                 destructiveButtonTitle:nil
-                                 otherButtonTitles:nil];
+				  initWithTitle:@"Video Devices" 
+				       delegate:self 
+				  cancelButtonTitle:nil
+				  destructiveButtonTitle:nil
+				  otherButtonTitles:nil];
 
-    for (int i=0; i<[_agcModes count]; i++)
-        [popupQuery addButtonWithTitle:[_agcModes objectAtIndex:i]];
-
+    for (ALDevice* d in _cameraDevices)
+    {
+      [popupQuery addButtonWithTitle:d.label];
+    }
+    
     popupQuery.actionSheetStyle = UIActionSheetStyleBlackTranslucent;
-    popupQuery.tag = SHEET_AGC;
+    popupQuery.tag = SHEET_CAMERA;
     
     [popupQuery showInView:self.view];
     [popupQuery release];
 }
 
-//
-- (void) resume
+// called when swipe left on viewVideo1: changes remote video feed
+- (IBAction) onSwipeLeft
 {
-    if (_state == HELD || _state == HOLDING)
+    NSIndexPath* ipath = [tableViewDownlinkStats indexPathForSelectedRow];
+
+    for (int i = 0; i < [_downlinkStatsRow count]; ++i)
+    {
+        NSUInteger prev = (ipath.row + [_downlinkStatsRow count] - i) %
+	  [_downlinkStatsRow count];
+
+	if (prev == ipath.row)
+	  continue;
+
+	NSNumber* uId = [_downlinkStatsRow objectAtIndex:prev];
+	User* user = [_users objectForKey:uId];
+      
+	if (user)
+	{
+	    [self selectVideo:user];
+	    return;
+	}
+    }
+}
+
+// called when swipe right on viewVideo1: changes remote video feed
+- (IBAction) onSwipeRight
+{
+    NSIndexPath* ipath = [tableViewDownlinkStats indexPathForSelectedRow];
+
+    for (int i = 0; i < [_downlinkStatsRow count]; ++i)
+    {
+        NSUInteger next = (ipath.row + i) % [_downlinkStatsRow count];
+
+	if (next == ipath.row)
+	  continue;
+
+	NSNumber* uId = [_downlinkStatsRow objectAtIndex:next];
+	User* user = [_users objectForKey:uId];
+      
+	if (user)
+	{
+	    [self selectVideo:user];
+	    return;
+	}
+    }
+}
+
+- (void) becomeActive
+{
+    // resume paused video renderers
+    for (NSString* sinkId in _videoSinkToVideoView)
+    {	
+	ALVideoView* videoView = [_videoSinkToVideoView objectForKey:sinkId];
+	[videoView resume];
+    }
+}
+
+- (void) resignActive
+{
+    // pause video renderers
+    for (NSString* sinkId in _videoSinkToVideoView)
+    {	
+        ALVideoView* videoView = [_videoSinkToVideoView objectForKey:sinkId];
+	[videoView pause];
+    }  
+}
+
+// called from application delegate when app goes into foreground
+- (void) enterForeground
+{
+    if (_state == ONHOLD) // resume call if previously on hold
     {
         NSLog(@"Resuming call");
 
         [self connect];
 
+	// show a local notification
 	[[UIApplication sharedApplication] cancelAllLocalNotifications];
 
 	UILocalNotification* localNotification = 
-	  [[UILocalNotification alloc] init];
+	  [[[UILocalNotification alloc] init] autorelease];
 
 	localNotification.alertBody = @"Resuming AddLive conference.";
 	localNotification.applicationIconBadgeNumber = 0;
@@ -365,544 +593,1170 @@ NSString* CDO_SAMPLES_SECRET = @"CloudeoTestAccountSecret";
 	[[UIApplication sharedApplication] 
 	    scheduleLocalNotification:localNotification];
     }
-}
 
-// actions
+    // publish video
+    [self onPublishVideo];
 
-// helper: hash encodes and converts to hex for given string
-static NSString* sha256Hex(NSString* in)
-{
-    const char* cstr = [in cStringUsingEncoding:NSUTF8StringEncoding];
-    NSData* data = [NSData dataWithBytes:cstr length:in.length];
-    
-    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
-
-    CC_SHA256(data.bytes, data.length, digest);
-
-    NSMutableString* out =
-        [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
- 
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
-        [out appendFormat:@"%02x", digest[i]];
-
-    return out;
-}
-
-- (void) connect
-{
-    if (_state == HOLDING || _state == HELD)
-        [labelStatus setText:@"Resuming ..."];
-    else
-        [labelStatus setText:@"Connecting ..."];
-
-    labelStatus.textColor = [UIColor cyanColor];
-
-    _state = CONNECTING;
-
-    // prepare connection descriptor (token, scopdId, url, autopublishAudio)
-
-    char token[8];
-    srand(time(0));
-    int userId = 1 + (rand() % 10000);
-    sprintf(token, "%d", userId);
-
-    NSString* scopeId =
-        [[[textFieldURL text] componentsSeparatedByString: @"/"]
-         objectAtIndex:1];
-
-    ALConnectionDescriptor* desc = [[ALConnectionDescriptor alloc] init];
-    desc->url = [textFieldURL text];
-    desc->token = [NSString stringWithCString:token
-                   encoding:[NSString defaultCStringEncoding]];
-    desc->autopublishAudio = true;
-
-    // prepare authentication (userId, expires, salt, signature)
-
-    desc->authDetails->userId = userId;
-    desc->authDetails->expires = time(0) + 5 * 60;
-    desc->authDetails->salt = @"Some random string salt";
-
-    NSMutableString* signature = [[NSMutableString alloc] init];
-    [signature appendFormat:@"%d%@%d%@%lld%@", CDO_SAMPLES_APP_ID, scopeId, 
-	       userId, desc->authDetails->salt, desc->authDetails->expires,
-	       CDO_SAMPLES_SECRET];
-    desc->authDetails->signature = sha256Hex(signature);
-
-    // 
-
+    // start local video preview
     ALResponder* responder =
-        [[ALResponder alloc] init:@selector(onConnect:):self];
-    
-    [_api connect:desc:responder]; // response to onConnect
+      [[[ALResponder alloc] 
+	     initWithSelector:@selector(onStartLocalVideo:videoSinkId:)
+		   withObject:self]
+	autorelease];
+    [_service startLocalVideo:responder];
 
-    //
-
-    buttonConnectDisconnect.enabled = NO;
-    textFieldURL.enabled = NO;
+    _isBackgroundMode = NO;
 }
 
-- (void) disconnect
+// called from application delegate when app went into background
+- (void) enterBackground
 {
-    [labelStatus setText:@"Disconnecting ..."];
-    labelStatus.textColor = [UIColor cyanColor];
+    _isBackgroundMode = YES;
 
-    _state = DISCONNECTING;
-
-    //
-
-    ALResponder* responder =
-        [[ALResponder alloc] init:@selector(onDisconnect:):self];
-
-    NSString* scopeId =
-        [[[textFieldURL text] componentsSeparatedByString: @"/"]
-         objectAtIndex:1];
-    
-    [_api disconnect:scopeId:responder]; // response to onDisconnect
-
-    //
-
-    buttonConnectDisconnect.enabled = NO;
-}
-
-- (void) hold
-{
-    [labelStatus setText:@"Holding ..."];
-    labelStatus.textColor = [UIColor cyanColor];
-
-    _state = HOLDING;
-
-    //
-
-    ALResponder* responder =
-        [[ALResponder alloc] init:@selector(onHold:):self];
-
-    NSString* scopeId =
-        [[[textFieldURL text] componentsSeparatedByString: @"/"]
-         objectAtIndex:1];
-    
-    [_api disconnect:scopeId:responder]; // response to onHold
-
-    //
-
-    buttonConnectDisconnect.enabled = NO;
-}
-
-- (void) setAudioProperty:(NSInteger) index 
-			 :(NSString*) enable :(NSString*) mode
-{
-    NSString* prefix = @"global.dev.audio.";
-    
-    ALResponder* responder =
-        [[ALResponder alloc] init:@selector(onSetAudioProperty:):self];
-
-    int pos = (int) index;
-    
-    if (pos == 0)
+    // unpublish video
+    if (self.switchPublishVideo.isOn)
     {
-        [_api
-	 setProperty:[NSString stringWithFormat:@"%@%@", prefix, enable]
-         :@"0"
-         :responder
-         ];
+        self.switchPublishVideo.on = NO;
+        [self onPublishVideo];
+	self.switchPublishVideo.on = YES;
     }
-    else
-    {
-        [_api
-         setProperty:[NSString stringWithFormat:@"%@%@", prefix, enable]
-         :@"1"
-         :responder
-         ];
 
-        [_api
-         setProperty:[NSString stringWithFormat:@"%@%@", prefix, mode]
-         :[NSString stringWithFormat:@"%d", pos - 1]
-         :responder
-         ];
-    }    
+    // stop local video preview
+    ALResponder* responder =
+      [[[ALResponder alloc] 
+	     initWithSelector:@selector(onStopLocalVideo:)
+		   withObject:self]
+	autorelease];
+    [_service stopLocalVideo:responder];
 }
 
 // responses
 
-- (void) onInit:(ALError*) err
+- (void) onInitPlatform:(ALError*) err
 {
-    if ([ALService onMainThreadHelper_1:@selector(onInit:):self:err])
-        return;
+    NSLog(@"onInitPlatform");
 
-    NSLog(@"onInit %d", (int)_state);
-        
-    if (err->err_code)
+    if (err)
     {
-        [labelStatus
-         setText:@"Error - failed to initialize the SDK: kill the application"];
-        labelStatus.textColor = [UIColor redColor];
+        [self showError:
+	  [NSString stringWithFormat:@"Failed to initialize the SDK. <%@>", 
+		    err]];
+	[self unlockUI:YES];
     }
     else
     {
-        if (_state == INIT) // initPlatform succeeded
-        {
-	    // set service listeners
+        // setup video views
+        self.viewVideo0.service = _service; // local video
+	self.viewVideo0.mirror  = YES;
+	self.viewVideo1.service = _service; // remote video
+	self.viewVideo1.mirror  = NO;
 
-            _state = INIT_SERVICE_LISTENER;
-            
-            ALResponder* responder =
-                [[ALResponder alloc] init:@selector(onInit:):self];
+	// set service listeners
+	ALResponder* respAddServiceListener =
+	  [[[ALResponder alloc] 
+		   initWithSelector:@selector(onInitAddServiceListener:)
+			 withObject:self] 
+	    autorelease];
                 
-            [_api addServiceListener:self:responder];
+	[_service addServiceListener:self
+			   responder:respAddServiceListener];
 
-            return;
-        }
+	// get version string
+	ALResponder* respGetVersion =
+	  [[[ALResponder alloc]
+		 initWithSelector:@selector(onGetVersion:version:)
+		       withObject:self]
+	    autorelease];
+	[_service getVersion:respGetVersion];
+    }
+}
 
-	if (_state == INIT_SERVICE_LISTENER) // addServiceListener succeeded
-	{
-	    // set application id
+- (void) onInitAddServiceListener:(ALError*) err
+{
+    NSLog(@"onInitAddServiceListener");
 
-	    _state = INIT_APPLICATION_ID;
-
+    if (err)
+    {
+        [self showError:
+	  [NSString stringWithFormat:@"Failed to initialize the SDK. <%@>", 
+		    err]];
+	[self unlockUI:YES];
+    }
+    else
+    {
+	// get video devices
         ALResponder* responder =
-          [[ALResponder alloc] init:@selector(onInit:):self];
+	  [[[ALResponder alloc] 
+	     initWithSelector:
+	       @selector(onInitGetVideoCaptureDeviceNames:devices:)
+		   withObject:self] 
+	    autorelease];
+	[_service getVideoCaptureDeviceNames:responder];
+    }
+}
 
-	    [_api setApplicationId:CDO_SAMPLES_APP_ID:responder];	    
+- (void) onInitGetVideoCaptureDeviceNames:(ALError*) err 
+				  devices:(NSArray*) devices
+{
+    NSLog(@"onInitGetVideoCaptureDeviceNames");
 
-	    return;
-	}
+    if (err)
+    {
+        [self showError:
+	  [NSString stringWithFormat:@"Failed to initialize the SDK. <%@>", 
+		    err]];
+	[self unlockUI:YES];
+    }
+    else
+    {
+        [_cameraDevices release];
+	_cameraDevices = [devices copy];
 
-	// setApplicationId succeeded
-
+	// from here on the application is ready
         _state = DISCONNECTED;
 
-        [labelStatus setText:@"Ready"];
-        labelStatus.textColor = [UIColor yellowColor];
+	[self cameraSheetClickedAtIndex:0]; // set default camera (front)
+	[self nsSheetClickedAtIndex:6]; // set default noise suppression mode
 
-        [self nsSheetClickedAtIndex:6];  // set default noise suppression mode
-        [self agcSheetClickedAtIndex:4]; // set default gain control mode
+	// start local video preview      
+	ALResponder* responder =
+	  [[[ALResponder alloc] 
+	     initWithSelector:@selector(onStartLocalVideo:videoSinkId:)
+		   withObject:self]
+	    autorelease];
+	[_service startLocalVideo:responder];
 
-	// from here on the application is ready 
+	[self showReady];
+    	[self unlockUI:YES];
     }
 }
 
 - (void) onConnect:(ALError*) err
 {
-    if ([ALService onMainThreadHelper_1:@selector(onConnect:):self:err])
-        return;
-
     NSLog(@"onConnect");
 
-    buttonConnectDisconnect.enabled = YES;
-    
-    if (err->err_code) // error
+    if (err) // error
     {
-        textFieldURL.enabled = YES;
+        _state = DISCONNECTED;
 
-        [labelStatus setText:[NSString stringWithFormat:@"ERROR %d: %@",
-                              err->err_code, err->err_message]];
-        labelStatus.textColor = [UIColor redColor];
-        
-        [buttonConnectDisconnect
-         setTitle:@"Connect" forState:UIControlStateNormal];
+	if ((err.err_code == kCommInvalidHost) && (_connectAttempts < 3))
+	{
+	    // retry to connect - connection might not be ready
 
-        return;
-    }
-
-    // connect succeeded
-
-    _state = CONNECTED;
-
-    // prevent app from becoming idle
-    [[UIApplication sharedApplication] setIdleTimerDisabled:YES];
+	    [NSTimer scheduledTimerWithTimeInterval:2.0
+					     target:self
+					   selector:@selector(connect)
+					   userInfo:nil
+					    repeats:NO];
+	}
+	else
+	{
+	    if (err.err_code == kCommClientVersionNotSupported)
+	    {
+	        [_alert dismissWithClickedButtonIndex:0 animated:YES];
     
-    [labelStatus setText: @"In Call"];
-    labelStatus.textColor = [UIColor greenColor];
+		NSString* message = 
+		  [NSString stringWithFormat:
+			      @"Version %@ is not supported. Please upgrade.",
+			    _version];
+
+		[_alert release];
+		_alert =
+		  [[UIAlertView alloc] initWithTitle: @"Unsupported version."
+					     message: message
+					    delegate: self
+				   cancelButtonTitle: @"OK"
+				   otherButtonTitles: nil];
+		[_alert show];
+	    }
+
+	    [self showError:[NSString stringWithFormat:@"ERROR %@", err]];
+
+	    [self unlockUI:YES];
+
+	    [buttonConnectDisconnect
+	      setTitle:@"Connect" forState:UIControlStateNormal];
+
+	    _connectAttempts = 0;
+	}
+    }
+    else // connect succeeded
+    {
+        NSLog(@"Success");
+
+	_state = CONNECTED;
+	_connectAttempts = 0;
+
+        [self unlockUI:NO];       
+	[self showInCall];
         
-    [buttonConnectDisconnect
-     setTitle:@"Disconnect" forState:UIControlStateNormal];    
+	// prevent app from becoming idle
+	[[UIApplication sharedApplication] setIdleTimerDisabled:YES];
+
+	[buttonConnectDisconnect
+	  setTitle:@"Disconnect" forState:UIControlStateNormal];
+
+	// start measuring stats
+	ALResponder* responder =
+	  [[[ALResponder alloc] 
+	     initWithSelector:@selector(onStartMeasuringStats:) 
+		   withObject:self] autorelease];
+	[_service startMeasuringStats:[self scopeId]
+			     interval:[NSNumber numberWithInt:2]
+			    responder:responder];
+    }
 }
 
 - (void) onDisconnect:(ALError*) err
 {
-    if ([ALService onMainThreadHelper_1:@selector(onDisconnect:):self:err])
-        return;
-
     NSLog(@"onDisconnect");
 
-    buttonConnectDisconnect.enabled = YES;
-
-    textFieldURL.enabled = YES;
+    [self unlockUI:YES];
     
     _state = DISCONNECTED;
 
     // app can be become idle again
     [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
     
-    if (err->err_code) // error
+    if (err) // error
     {
-        [labelStatus setText:[NSString stringWithFormat:@"ERROR %d: %@",
-                              err->err_code, err->err_message]];        
-        labelStatus.textColor = [UIColor redColor];
+        [self showError:[NSString stringWithFormat:@"ERROR %@", err]];
     }
     else // succeeded
     {
-        [labelStatus setText:@"Ready"];
-        labelStatus.textColor = [UIColor yellowColor];
+        NSLog(@"Success");
+
+        [self showReady];
     }
-    
-    [buttonConnectDisconnect
-     setTitle:@"Connect" forState:UIControlStateNormal];
+
+    [self cleanUpAfterDisconnect];
+}
+
+- (void) onReconnect:(ALError*) err
+{
+    NSLog(@"onReconnect");
+
+    if (err) // error
+    {
+        [self unlockUI:YES];
+
+        [self showError:[NSString stringWithFormat:@"ERROR %@", err]];
+    }
+    else // succeeded
+    {
+        [self connect];
+    }
+
+    [self cleanUpAfterDisconnect];
 }
 
 - (void) onHold:(ALError*) err
 {
-    if ([ALService onMainThreadHelper_1:@selector(onHold:):self:err])
-        return;
-
     NSLog(@"onHold");
 
-    buttonConnectDisconnect.enabled = YES;
-
-    textFieldURL.enabled = YES;
+    [self unlockUI:NO];
     
-    _state = HELD;
+    _state = ONHOLD;
 
     // app can be become idle again
     [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
     
-    if (err->err_code) // error
+    if (err) // error
     {
-        [labelStatus setText:[NSString stringWithFormat:@"ERROR %d: %@",
-                              err->err_code, err->err_message]];        
-        labelStatus.textColor = [UIColor redColor];
+        [self showError:[NSString stringWithFormat:@"ERROR %@", err]];
     }
     else // succeeded
     {
-        [labelStatus setText:@"Ready"];
-        labelStatus.textColor = [UIColor yellowColor];
+        NSLog(@"Success");
+
+        [self showBusy:@"Holding call ..."];
     }
-    
-    [buttonConnectDisconnect
-     setTitle:@"Connect" forState:UIControlStateNormal];  
+
+    [self cleanUpAfterDisconnect];   
 }
 
-- (void) onSetAudioProperty:(ALError*) err
+- (void) onSetNSMode:(ALError*) err
 {
-    if ([ALService onMainThreadHelper_1:@selector(onSetAudioProperty:):self:err])
-        return;
+    NSLog(@"onSetNSMode");
 
-    NSLog(@"onSetAudioProperty");
-
-    if (err->err_code)
-        NSLog(@"ERROR %d: %@", err->err_code, err->err_message);
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+    }
 }
 
 - (void) onSpeakerResponse:(ALError*) err
 {
-    if ([ALService onMainThreadHelper_1:@selector(onSpeakerResponse:):self:err])
-        return;
-    
     NSLog(@"onSpeakerResponse");
 
-    if (err->err_code == 0)
-        _speakerState = ! _speakerState;
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+
+        self.switchSpeaker.on = ! self.switchSpeaker.isOn;
+    }
     else
-        NSLog(@"ERROR %d: %@", err->err_code, err->err_message);
+    {
+        NSLog(@"Success");
+    }
 }
 
-// service listeners
+- (void) onSetVideoCaptureDevice:(ALError*) err
+{
+    NSLog(@"onSetVideoCaptureDevice");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+    }    
+}
+
+- (void) onStartLocalVideo:(ALError*) err
+	       videoSinkId:(NSString*) videoSinkId
+{
+    NSLog(@"onStartLocalVideo");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"capturing into video sink %@", videoSinkId);
+
+	[_videoSinkToVideoView setObject:self.viewVideo0 forKey:videoSinkId];
+	[self.viewVideo0 addRenderer:videoSinkId];
+    }
+}
+
+- (void) onStopLocalVideo:(ALError*) err
+{
+    NSLog(@"onStopLocalVideo");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+
+	[_videoSinkToVideoView removeObjectForKey:self.viewVideo0.videoSinkId];
+	[self.viewVideo0 removeRenderer];
+    }
+}
+
+- (void) onPublish:(ALError*) err
+{
+    NSLog(@"onPublish");
+
+    [self unlockUI:NO];
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+
+	[self showInCall];
+    }
+}
+
+- (void) onUnpublish:(ALError*) err
+{
+    NSLog(@"onUnpublish");
+
+    [self unlockUI:NO];
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+
+	if (! self.switchPublishAudio.isOn)
+	{
+	    [_uplinkStatsAudio release];
+	    _uplinkStatsAudio = nil;
+	}
+
+	if (! self.switchPublishVideo.isOn)
+	{
+	    [_uplinkStatsVideo release];
+	    _uplinkStatsVideo = nil;
+	}
+
+	[self showInCall];
+    }
+}
+
+- (void) onGetVersion:(ALError*) err 
+	      version:(NSString*) version
+{
+    NSLog(@"onGetVersion");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+	
+	[_version release];
+	_version = [version copy];
+    }
+}
+
+- (void) onNetworkTest:(ALError*) err 
+	       quality:(NSNumber*) quality
+{
+    NSLog(@"onNetworkTest");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success: %@", quality);
+    }    
+}
+
+- (void) onSetAllowedSenders:(ALError*) err
+{
+    NSLog(@"onSetAllowedSenders");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+    }
+}
+
+- (void) onStartMeasuringStats:(ALError*) err
+{
+    NSLog(@"onStartMeasuringStats");
+
+    if (err)
+    {
+        NSLog(@"ERROR %@", err);
+    }
+    else
+    {
+        NSLog(@"Success");
+    }
+}
+
+// methods from ALServiceListener protocol
+
+- (void) videoFrameSizeChanged:(ALVideoFrameSizeChangedEvent*) event
+{
+    NSLog(@"videoFrameSizeChanged: %@ -> (%d x %d)", event.sinkId, 
+	  event.width, event.height);
+
+    id obj = [_videoSinkToVideoView objectForKey:event.sinkId];
+    if (obj)
+        [obj resolutionChanged:event.width
+			height:event.height];
+}
 
 - (void) connectionLost:(ALConnectionLostEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(connectionLost:):self:event])
-        return;
+    NSLog(@"connectionLost");
 
     _state = DISCONNECTED;
 
     [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
     
     [labelStatus setText:[NSString stringWithFormat:@"ERROR %d: %@",
-                          event->errCode, event->errMessage]];
+                          event.errCode, event.errMessage]];
     labelStatus.textColor = [UIColor redColor];   
 
     [buttonConnectDisconnect
      setTitle:@"Connect" forState:UIControlStateNormal];
+
+    [self cleanUpAfterDisconnect];
+
+    [self unlockUI:YES];
 }
 
 - (void) userEvent:(ALUserStateChangedEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(userEvent:):self:event])
-        return;        
+    NSLog(@"userEvent: %@", event);
 
-    if (event->isConnected)
+    if (event.isConnected)
     {
-        NSString* stats = [NSString stringWithFormat:
-                           @"User %lld Stats", event->userId];
-
-        [_downlinkStats setObject:stats forKey:[NSNumber numberWithLongLong
-                                                   :event->userId]];
+        [_users setObject:[[[User alloc] init] autorelease]
+		   forKey:[NSNumber numberWithLongLong:
+				      event.userId]];
 
         [_downlinkStatsRow addObject:[NSNumber numberWithLongLong
-                                      :event->userId]];
+					 :event.userId]];
+
+	[self reloadDownlinkStats];
+
+	if (event.screenPublished)
+	{
+	    User* user = [_users objectForKey:
+				   [NSNumber numberWithLongLong:
+					       event.userId]];
+	    
+	    user.screenSinkId = event.screenSinkId;
+
+	    [self selectVideo:user];
+	}
+
+	if (event.videoPublished)
+	{
+	    User* user = [_users objectForKey:
+				   [NSNumber numberWithLongLong:
+					       event.userId]];
+	    
+	    user.videoSinkId = event.videoSinkId;
+
+	    NSArray* keys = 
+	      [_videoSinkToVideoView allKeysForObject:self.viewVideo1];
+
+	    if (! [keys count])
+	    {
+	        [self selectVideo:user];
+	    }
+	}
     }
     else
     {
-        [_downlinkStats removeObjectForKey:[NSNumber numberWithLongLong
-                                            :event->userId]];
-        [_downlinkStatsRow removeObject:[NSNumber numberWithLongLong
-                                         :event->userId]];
-    }
-    
-    [tableViewDownlinkStats reloadData];
+        [_downlinkStatsRow removeObject:[NSNumber numberWithLongLong:
+						    event.userId]];
+
+	[self reloadDownlinkStats];
+
+	User* user = 
+	  [[_users objectForKey:
+		     [NSNumber numberWithLongLong:
+				 event.userId]] retain];
+
+	[_users removeObjectForKey:[NSNumber numberWithLongLong:
+					       event.userId]];
+
+        if ([self.viewVideo1.videoSinkId isEqual:user.videoSinkId] ||
+	    [self.viewVideo1.videoSinkId isEqual:user.screenSinkId])
+	{
+	    [self selectVideo:nil];
+	}
+
+	[user release];
+    }   
 }
 
 - (void) mediaStream:(ALUserStateChangedEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(mediaStream:):self:event])
-        return;
+    NSLog(@"mediaStream: %@", event);
 
-    // TODO
+    if ([event.mediaType caseInsensitiveCompare:@"screen"] == NSOrderedSame)
+    {
+        [self updateScreenStream:event];
+    }
+    else if ([event.mediaType caseInsensitiveCompare:@"video"] == NSOrderedSame)
+    {
+        [self updateVideoStream:event];
+    }
+    else if ([event.mediaType caseInsensitiveCompare:@"audio"] == NSOrderedSame)
+    {
+        [self updateAudioStream:event];
+    }
 }
 
 - (void) mediaStats:(ALMediaStatsEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(mediaStats:):self:event])
-        return;
+    //NSLog(@"mediaStats");
 
-    if ([event->mediaType caseInsensitiveCompare:@"audio"] != NSOrderedSame)
-        return;
-
-    if (event->remoteUserId < 0) // uplink stats
+    if ([event.mediaType caseInsensitiveCompare:@"audio"] == NSOrderedSame)
     {
-        NSString* stats = [NSString stringWithFormat:
-            @"kbps = %0.1f RTT = %0.1f #Loss = %d %%Loss = %0.1f",
-            8.0f * event->stats->bitRate / 1000.0f,
-            event->stats->rtt,
-            event->stats->totalLoss,
-            event->stats->loss];
-    
-        [labelUplinkStats setText:stats];
+        [self audioStats:event];
     }
-    else // downlink stats
+    else if ([event.mediaType caseInsensitiveCompare:@"video"] == NSOrderedSame)
     {
-        NSString* stats = [_downlinkStats objectForKey:
-                           [NSNumber numberWithLongLong:event->remoteUserId]];
-        if (stats == nil)
-            return;
-
-        stats = [NSString stringWithFormat:
-                 @"User %lld: kbps %0.1f #Loss = %d %%Loss = %0.1f",
-                 event->remoteUserId, 
-                 8.0f * event->stats->bitRate / 1000.0f,
-                 event->stats->totalLoss,
-                 event->stats->loss];
-
-        [_downlinkStats setObject:stats forKey:[NSNumber numberWithLongLong
-                                                :event->remoteUserId]];
-        
-        [tableViewDownlinkStats reloadData];
+        [self videoStats:event];
     }
 }
 
 - (void) message:(ALMessageEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(message:):self:event])
-        return;
-
-    // TODO    
+    NSLog(@"message from %lld", event.srcUserId);
 }
 
 - (void) mediaConnTypeChanged:(ALMediaConnTypeChangedEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(mediaConnTypeChanged:)
-         :self:event])
-        return;
-    
-    if ([event->mediaType caseInsensitiveCompare:@"audio"] != NSOrderedSame)
-        return;
-
-    NSLog(@"Connection type: %@", event->connectionType);
+    NSLog(@"[%@] connection type: %@", event.mediaType, event.connectionType);
 }
 
-- (void) echo:(ALEchoEvent*) event
+- (void) mediaConnHealthChanged:(ALMediaConnHealthChangedEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(echo:):self:event])
-        return;
-
-    // TODO
+    NSLog(@"[%@] connection health: %@", event.mediaType, event.healthStatus);
 }
 
 - (void) mediaInterrupt:(ALMediaInterruptEvent*) event
 {
-    if ([ALService onMainThreadHelper_1:@selector(mediaInterrupt:)
-         :self:event])
-        return;  
+    NSLog(@"mediaInterrupt");
 
-    if ([event->mediaType caseInsensitiveCompare:@"audio"] != NSOrderedSame)
+    if ([event.mediaType caseInsensitiveCompare:@"audio"] != NSOrderedSame)
         return;
 
-    NSLog(@"[%@] interrupt: %@", event->mediaType, 
-	  event->interrupt ? @"BEGIN" : @"END");
+    NSLog(@"[%@] interrupt: %@", event.mediaType, 
+	  event.interrupt ? @"BEGIN" : @"END");
 
-    if (event->interrupt)
+    if (event.interrupt)
     {
-        [self hold];
+        [self putCallOnHold];
+    }
+    else if (! _isBackgroundMode)
+    {
+        [UIApplication sharedApplication].applicationIconBadgeNumber = 0;
 
-	[[UIApplication sharedApplication] cancelAllLocalNotifications];
-
-	UILocalNotification* localNotification = [[UILocalNotification alloc] 
-						   init];
-
-	localNotification.alertBody = 
-	    @"Your AddLive conference has been put on hold.";
-	localNotification.applicationIconBadgeNumber = 1;
-	localNotification.soundName = UILocalNotificationDefaultSoundName;
-	localNotification.fireDate = nil;
-
-	[[UIApplication sharedApplication] 
-	  scheduleLocalNotification:localNotification];
+        [self connect];
     }
 }
 
-// actions sheets
+// private
 
-- (void) actionSheet:(UIActionSheet*) actionSheet 
-clickedButtonAtIndex: (NSInteger) buttonIndex
+- (void) showError:(NSString*) errorMsg
 {
-    if (buttonIndex < 0)
-        return;
+    labelStatus.textColor = [UIColor redColor];
+    [labelStatus setText:errorMsg];
+}
+
+- (void) showBusy:(NSString*) busyMsg
+{
+    labelStatus.textColor = [UIColor cyanColor];
+    [labelStatus setText:busyMsg];
+}
+
+- (void) showReady
+{
+    labelStatus.textColor = [UIColor yellowColor];
+    [labelStatus setText:[NSString stringWithFormat:@"v%@: Ready", _version]];
+}
+
+- (void) showInCall
+{
+  labelStatus.textColor = [UIColor greenColor];
+  [labelStatus setText: @"In Call"];
+}
+
+// connect to a conference
+- (void) connect
+{
+    // disable user input
+    [self lockUI];
+
+    if (_state == ONHOLD)
+    {
+        [self showBusy:@"Resuming call ..."];
+    }
+    else if (_state == DISCONNECTED)
+    {
+        [self showBusy:@"Connecting ..."];
+    }
+
+    // prepare connection descriptor
+    ALConnectionDescriptor* desc = 
+      [[[ALConnectionDescriptor alloc] init] autorelease];
+
+    desc.scopeId = [self scopeId];
+
+    if ([self isURL])
+        desc.url = [textFieldURL text];
     
-    switch (actionSheet.tag)
+    desc.autopublishAudio = self.switchPublishAudio.isOn;
+    desc.autopublishVideo = self.switchPublishVideo.isOn;
+
+    // prepare video stream
+    desc.videoStream.maxWidth = 480;
+    desc.videoStream.maxHeight = 640;
+    desc.videoStream.maxBitRate = 1024;
+    desc.videoStream.maxFps = 15;
+
+    // prepare authentication (userId, expires, salt)
+    desc.authDetails.userId = _userId;
+    desc.authDetails.expires = time(0) + 5 * 60;
+    desc.authDetails.salt = @"Some random string salt";    
+#if 0
+    desc.authDetails.signature = 
+      [ALAuthDetails signDetails:[NSNumber numberWithInt:AL_SAMPLE_APP_ID]
+			 scopeId:desc.scopeId
+			  userId:_userId
+			    salt:desc.authDetails.salt
+			 expires:desc.authDetails.expires
+		       secretKey:AL_SAMPLE_KEY];
+#endif
+    //
+    _connectAttempts++;
+
+    // call connect
+    ALResponder* responder =
+        [[[ALResponder alloc] 
+	   initWithSelector:@selector(onConnect:)
+		 withObject:self] 
+	  autorelease];
+
+    [_service connect:desc 
+	    responder:responder]; // response to onConnect
+}
+
+// disconnect from the conference call
+- (void) disconnect
+{
+    // disable user input
+    [self lockUI];
+
+    [self showBusy:@"Disconnecting ..."];
+
+    // call disconnect
+    ALResponder* responder =
+      [[[ALResponder alloc] 
+	 initWithSelector:@selector(onDisconnect:)
+	       withObject:self] autorelease];
+    [_service disconnect:[self scopeId]
+	       responder:responder]; // response to onDisconnect
+}
+
+// disconnect and reconnect
+- (void) reconnect
+{
+    if (_isBackgroundMode)
     {
-        case SHEET_AEC: 
-            [self aecSheetClickedAtIndex:buttonIndex];
-            break;
-        case SHEET_NS:
-            [self nsSheetClickedAtIndex:buttonIndex];
-            break;
-        case SHEET_AGC:
-            [self agcSheetClickedAtIndex:buttonIndex];
-            break;
+        [self putCallOnHold];
+
+        return;
+    }
+
+    if (_state != CONNECTED)
+    {
+        return;
+    }
+
+    // disable user input
+    [self lockUI];
+
+    [self showBusy:@"Reconnecting ..."];    
+
+    // call disconnect
+    ALResponder* responder =
+      [[[ALResponder alloc] 
+	 initWithSelector:@selector(onReconnect:)
+	       withObject:self] autorelease];
+    [_service disconnect:[self scopeId]
+	       responder:responder]; // response to onReconnect
+}
+
+// holds the conference call (i.e. disconnect)
+- (void) hold
+{
+    // disable user input
+    [self lockUI];
+
+    [self showBusy:@"Holding ..."];
+
+    // call disconnect
+    ALResponder* responder =
+      [[[ALResponder alloc] 
+	 initWithSelector:@selector(onHold:)
+	       withObject:self] autorelease];    
+    [_service disconnect:[self scopeId]
+	       responder:responder]; // response to onHold
+}
+
+- (void) showEmailView:(NSString*) filenameAttachment;
+{
+    if (! [MFMailComposeViewController canSendMail])
+    {
+        [_alert dismissWithClickedButtonIndex:0 animated:YES];
+    
+	NSString* message = @"Logs failed! Check if your email account works.";
+
+	[_alert release];
+	_alert =
+	  [[UIAlertView alloc] initWithTitle: @"Error"
+				     message: message
+				    delegate: self
+			   cancelButtonTitle: @"OK"
+			   otherButtonTitles: nil];
+	[_alert show];
+
+	return;
+    }
+
+    MFMailComposeViewController* controller =
+      [[[MFMailComposeViewController alloc] init] autorelease];
+    controller.mailComposeDelegate = self;
+    
+    [controller setSubject:LOG_EMAIL_SUBJECT];
+    [controller setToRecipients:
+     [NSArray arrayWithObjects:LOG_RECEIVER_EMAIL,nil]];
+    [controller setMessageBody:@"" isHTML:NO];
+
+    NSData* data = [NSData dataWithContentsOfFile:filenameAttachment];
+
+    [controller addAttachmentData:data mimeType:@"text/plain"
+     fileName:LOG_FILE_EMAIL];
+
+    [self presentModalViewController:controller animated:YES];
+}
+
+- (void) audioStats:(ALMediaStatsEvent*) event
+{
+    if (event.remoteUserId < 0) // uplink stats
+    {
+        NSString* stats = [NSString stringWithFormat:
+            @"[A] kbps = %0.1f RTT = %0.1f #Loss = %d %%Loss = %0.1f",
+            8.0f * event.stats.bitRate / 1000.0f,
+            event.stats.rtt,
+            event.stats.totalLoss,
+            event.stats.loss];
+    
+	[_uplinkStatsAudio release];
+	_uplinkStatsAudio = [stats copy];
+
+        [labelUplinkStats setText
+	    :[NSString stringWithFormat:@"%@ %@", 
+	        (_uplinkStatsAudio == nil) ? @"[No Audio]" : _uplinkStatsAudio,
+		(_uplinkStatsVideo == nil) ? @"[No Video]" : _uplinkStatsVideo]
+	 ];
+    }
+    else // downlink stats
+    {
+        User* user = [_users objectForKey:
+			       [NSNumber numberWithLongLong:
+					   event.remoteUserId]];
+
+        NSString* stats = [NSString stringWithFormat:
+            @"[A] kbps %0.1f #Loss = %d %%Loss = %0.1f",
+            8.0f * event.stats.bitRate / 1000.0f,
+            event.stats.totalLoss,
+            event.stats.loss];
+
+	user.statsAudio = stats;
+
+	[self reloadDownlinkStats];
     }
 }
 
-- (void) aecSheetClickedAtIndex:(NSInteger) index
+- (void) videoStats:(ALMediaStatsEvent*) event
 {
-    [self setAudioProperty:index:@"enableAEC":@"modeAECM"];
-    [buttonAec setTitle:[_aecModes objectAtIndex:index]
-     forState:UIControlStateNormal];
+    if (event.remoteUserId < 0) // uplink stats
+    {
+        NSString* stats = [NSString stringWithFormat:
+            @"[V] %%CPU = %0.1f kbps = %0.1f #Loss = %d %%Loss = %0.1f "
+	     "QDL = %0.1f",
+	    event.stats.totalCpu,
+            8.0f * event.stats.bitRate / 1000.0f,
+            event.stats.totalLoss,
+	    event.stats.loss,
+	    event.stats.queueDelay]; 
+
+	[_uplinkStatsVideo release];
+	_uplinkStatsVideo = [stats copy];
+
+        [labelUplinkStats setText
+	    :[NSString stringWithFormat:@"%@ %@", 
+	        (_uplinkStatsAudio == nil) ? @"[No Audio]" : _uplinkStatsAudio,
+		(_uplinkStatsVideo == nil) ? @"[No Video]" : _uplinkStatsVideo]
+	 ];
+    }
+    else // downlink stats
+    {
+        User* user = [_users objectForKey:
+			       [NSNumber numberWithLongLong:
+					   event.remoteUserId]];
+
+        NSString* stats = [NSString stringWithFormat:
+	    @"[V] %%CPU = %0.1f kbps = %0.1f #Loss = %d %%Loss = %0.1f",
+	    event.stats.totalCpu,
+            8.0f * event.stats.bitRate / 1000.0f,
+            event.stats.totalLoss,
+            event.stats.loss];
+
+	user.statsVideo = stats;
+        
+	[self reloadDownlinkStats];
+    }
 }
 
-- (void) nsSheetClickedAtIndex:(NSInteger) index
+- (void) lockUI
 {
-    [self setAudioProperty:index:@"enableNS":@"modeNS"];
-    [buttonNs setTitle:[_nsModes objectAtIndex:index]
-     forState:UIControlStateNormal];
+    buttonConnectDisconnect.enabled = NO;
+    switchSpeaker.enabled = NO;
+    switchPublishVideo.enabled = NO;
+    switchPublishAudio.enabled = NO;
+    buttonNs.enabled = NO;
+    buttonCamera.enabled = NO;
+    textFieldURL.enabled = NO;
 }
 
-- (void) agcSheetClickedAtIndex:(NSInteger) index
+- (void) unlockUI:(BOOL) enableURL
 {
-    [self setAudioProperty:index:@"enableAGC":@"modeAGC"];
-    [buttonAgc setTitle:[_agcModes objectAtIndex:index]
-     forState:UIControlStateNormal];
+    buttonConnectDisconnect.enabled = YES;
+    switchSpeaker.enabled = YES;
+    switchPublishVideo.enabled = YES;
+    switchPublishAudio.enabled = YES;
+    buttonNs.enabled = YES;
+    buttonCamera.enabled = YES;
+    textFieldURL.enabled = enableURL;
 }
 
-//
+- (NSString*) scopeId
+{
+    NSArray* url = [[textFieldURL text] componentsSeparatedByString: @"/"];
+
+    if ([url count] == 1)
+      return [url objectAtIndex:0];
+
+    if ([url count] == 2)
+      return [url objectAtIndex:1];    
+
+    return nil;
+}
+
+- (BOOL) isURL
+{
+    NSArray* url = [[textFieldURL text] componentsSeparatedByString: @"/"];
+
+    if ([url count] == 2)
+    {
+        NSArray* host = 
+	  [[url objectAtIndex:0] componentsSeparatedByString: @":"];
+
+	if ([host count] == 2) // TODO: check if it's valid
+	    return YES;
+    }
+
+    return NO;
+}
+
+- (void) reloadDownlinkStats
+{
+    NSIndexPath* ipath = [tableViewDownlinkStats indexPathForSelectedRow];
+
+    [tableViewDownlinkStats reloadData];
+
+    if (ipath)
+    {
+      [tableViewDownlinkStats 
+	  selectRowAtIndexPath:ipath
+		      animated:NO 
+		scrollPosition:UITableViewScrollPositionNone];
+    }
+}
+
+- (void) cleanUpAfterDisconnect
+{
+    [buttonConnectDisconnect
+     setTitle:@"Connect" forState:UIControlStateNormal];
+
+    if (self.viewVideo1.videoSinkId)
+    {
+        [_videoSinkToVideoView removeObjectForKey:self.viewVideo1.videoSinkId];
+    }
+    [self.viewVideo1 removeRenderer];
+
+    [labelUplinkStats setText:@"Uplink Stats"];
+
+    [_downlinkStatsRow removeAllObjects];
+    [_users removeAllObjects];
+
+    [tableViewDownlinkStats reloadData];
+}
+
+- (void) selectVideo:(User*) user
+{
+    NSUInteger index = 0;
+
+    if (user)
+    {
+        NSNumber* userId = 
+	  [[_users allKeysForObject:user] objectAtIndex:0];
+	
+	index = [_downlinkStatsRow indexOfObject:userId];
+    }
+    else
+    {
+        NSNumber* userId = nil;
+
+	NSArray* userIds = [_users allKeys];
+        for (NSNumber* uId in userIds)
+	{
+	    User* u = [_users objectForKey:uId];
+
+	    if (([u.screenSinkId length] > 0) || ([u.videoSinkId length] > 0))
+	    {
+	        userId = uId;
+	        break;
+	    }
+	}
+
+        if (userId == nil)
+	{
+	    [_videoSinkToVideoView removeObjectForKey:
+				     self.viewVideo1.videoSinkId];
+	    [self.viewVideo1 removeRenderer];
+
+	    return;
+	}
+
+	index = [_downlinkStatsRow indexOfObject:userId];
+    }
+    
+    NSIndexPath* indexPath = [NSIndexPath indexPathForRow:index 
+						inSection:0];
+    [tableViewDownlinkStats
+		  selectRowAtIndexPath:indexPath
+			      animated:NO
+			scrollPosition:UITableViewScrollPositionNone];
+    [self tableView:tableViewDownlinkStats
+	  didSelectRowAtIndexPath:indexPath];
+}
+
+- (void) updateScreenStream:(ALUserStateChangedEvent*) event
+{
+    User* user = [_users objectForKey:
+			   [NSNumber numberWithLongLong:
+				       event.userId]];
+
+    if (event.screenPublished)
+    {
+	user.screenSinkId = event.screenSinkId;
+
+	[self selectVideo:user];
+    }
+    else
+    {
+        user.statsVideo = @"";
+
+	NSString* screenSinkId = [user.screenSinkId copy];
+	user.screenSinkId = @"";
+
+	[self reloadDownlinkStats];
+
+        if ([self.viewVideo1.videoSinkId isEqual:screenSinkId])
+	{
+	    [self selectVideo:nil];
+	}
+
+	[screenSinkId release];
+    }    
+}
+
+- (void) updateAudioStream:(ALUserStateChangedEvent*) event
+{
+    if (! event.audioPublished)
+    {
+        User* user = [_users objectForKey:
+			       [NSNumber numberWithLongLong:
+					   event.userId]];
+	user.statsAudio = @"";
+
+	[self reloadDownlinkStats];
+    }
+}
+
+- (void) updateVideoStream:(ALUserStateChangedEvent*) event
+{
+    User* user = [_users objectForKey:
+			   [NSNumber numberWithLongLong:
+				       event.userId]];
+
+    if (event.videoPublished)
+    {
+	user.videoSinkId = event.videoSinkId;
+
+        NSArray* keys = 
+	  [_videoSinkToVideoView allKeysForObject:self.viewVideo1];
+
+	if (! [keys count])
+	{
+	    [self selectVideo:user];
+	}
+    }
+    else
+    {
+        user.statsVideo = @"";
+
+	NSString* videoSinkId = [user.videoSinkId copy];
+	user.videoSinkId = @"";
+
+	[self reloadDownlinkStats];
+
+        if ([self.viewVideo1.videoSinkId isEqual:videoSinkId])
+	{
+	    [self selectVideo:nil];
+	}
+
+	[videoSinkId release];
+    }
+}
+
+- (void) putCallOnHold
+{
+    [self hold];
+
+    [[UIApplication sharedApplication] cancelAllLocalNotifications];
+
+    UILocalNotification* localNotification = 
+      [[[UILocalNotification alloc] init] autorelease];
+
+    localNotification.alertBody = 
+      @"Your AddLive conference has been put on hold.";
+    localNotification.applicationIconBadgeNumber = 1;
+    localNotification.soundName = UILocalNotificationDefaultSoundName;
+    localNotification.fireDate = nil;
+
+    [[UIApplication sharedApplication] 
+	  scheduleLocalNotification:localNotification];
+}
+
+- (void) startNetworkTest
+{
+  ALResponder* respNetworkTest =
+    [[[ALResponder alloc]
+		 initWithSelector:@selector(onNetworkTest:quality:)
+		       withObject:self]
+      autorelease];
+
+  ALAuthDetails* authDetails = [[ALAuthDetails alloc] init];
+  authDetails.userId = _userId;
+  authDetails.expires = time(0) + 5 * 60;
+  authDetails.salt = @"Some random string salt";
+
+#if 0
+  authDetails.signature = 
+    [ALAuthDetails signDetails:[NSNumber numberWithInt:AL_SAMPLE_APP_ID]
+		       scopeId:@""
+			userId:_userId
+			  salt:authDetails.salt
+		       expires:authDetails.expires
+		     secretKey:AL_SAMPLE_KEY];
+#endif
+
+  [_service networkTest:[NSNumber numberWithInt:1024]
+	    authDetails:authDetails
+	      responder:respNetworkTest];
+}
 
 + (char*) createTempFilename:(NSString*) template
 {
@@ -951,7 +1805,7 @@ clickedButtonAtIndex: (NSInteger) buttonIndex
     {
         NSMutableDictionary* tmpDict = [NSMutableDictionary dictionary];
 
-        char* key;
+        const char* key;
         for (int i = 0; (key = asl_key(m, i)); i++)
 	{
             NSString* keyString = [NSString stringWithUTF8String:(char*)key];
@@ -986,43 +1840,58 @@ clickedButtonAtIndex: (NSInteger) buttonIndex
     [fh synchronizeFile];
 }
 
-// email
+// actions sheets
 
-- (void) prepareEmail:(NSString*) filename
+- (void) actionSheet:(UIActionSheet*) actionSheet 
+clickedButtonAtIndex: (NSInteger) buttonIndex
 {
-    if (! [MFMailComposeViewController canSendMail])
+    if (buttonIndex < 0)
+        return;
+    
+    switch (actionSheet.tag)
     {
-        [_alert dismissWithClickedButtonIndex:0 animated:YES];
-    
-	NSString* message = @"Logs failed! Check if your email account works.";
-
-	_alert =
-	  [[UIAlertView alloc] initWithTitle: @"Error"
-				     message: message
-				    delegate: self
-			   cancelButtonTitle: @"OK"
-			   otherButtonTitles: nil];
-	[_alert show];
-	[_alert release];
-
-	return;
+        case SHEET_NS:
+            [self nsSheetClickedAtIndex:buttonIndex];
+            break;
+        case SHEET_CAMERA:
+	    [self cameraSheetClickedAtIndex:buttonIndex];
+	    break;
     }
+}
 
-    MFMailComposeViewController* controller =
-        [[[MFMailComposeViewController alloc] init] autorelease];
-    controller.mailComposeDelegate = self;
-    
-    [controller setSubject:LOG_EMAIL_SUBJECT];
-    [controller setToRecipients:
-     [NSArray arrayWithObjects:LOG_RECEIVER_EMAIL,nil]];
-    [controller setMessageBody:@"" isHTML:NO];
+- (void) nsSheetClickedAtIndex:(NSInteger) index
+{
+    ALResponder* responder =
+      [[[ALResponder alloc] 
+	 initWithSelector:@selector(onSetNSMode:)
+	       withObject:self] 
+	autorelease];
 
-    NSData* data = [NSData dataWithContentsOfFile:filename];
+    [_service setNSMode:index
+	      responder:responder];
 
-    [controller addAttachmentData:data mimeType:@"text/plain"
-     fileName:LOG_FILE_EMAIL];
+    NSArray* nsModes = [ALService getNSModes];
+    [buttonNs setTitle:[nsModes objectAtIndex:index]
+     forState:UIControlStateNormal];
+}
 
-    [self presentModalViewController:controller animated:YES];
+- (void) cameraSheetClickedAtIndex:(NSInteger) index
+{
+    // set video capture device
+    ALResponder* responder =
+      [[[ALResponder alloc] 
+	     initWithSelector:@selector(onSetVideoCaptureDevice:)
+		   withObject:self]
+	autorelease];
+
+    ALDevice* dev = [_cameraDevices objectAtIndex:index];
+
+    [_service setVideoCaptureDevice:dev.id
+			  responder:responder];
+
+    [buttonCamera setTitle:dev.label forState:UIControlStateNormal];
+
+    self.viewVideo0.mirror = (index == 0); // assumes index 0 is always front
 }
 
 - (void) mailComposeController:(MFMailComposeViewController*) controller 
@@ -1039,14 +1908,14 @@ clickedButtonAtIndex: (NSInteger) buttonIndex
     return 1;
 }
 
-- (NSInteger) tableView:
-(UITableView*)tableView numberOfRowsInSection:(NSInteger)section
+- (NSInteger) tableView:(UITableView*) tableView 
+  numberOfRowsInSection:(NSInteger)section
 {       
-    return [_downlinkStats count];
+    return [_downlinkStatsRow count];
 }
 
-- (UITableViewCell *)tableView:
-(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)indexPath
+- (UITableViewCell*) tableView:(UITableView*) tableView 
+	 cellForRowAtIndexPath:(NSIndexPath*) indexPath
 {
     UITableViewCell* cell =
         [tableViewDownlinkStats dequeueReusableCellWithIdentifier:@"0"];
@@ -1054,26 +1923,84 @@ clickedButtonAtIndex: (NSInteger) buttonIndex
     if (cell == nil)
     {
         cell = [[[UITableViewCell alloc]
-                 initWithStyle:
-                 UITableViewCellStyleDefault reuseIdentifier:@"0"] autorelease];
+		  initWithStyle:
+		    UITableViewCellStyleDefault reuseIdentifier:@"0"] 
+		 autorelease];
     }
 
     NSNumber* userId =
         [_downlinkStatsRow objectAtIndex: indexPath.row];
 
-    float fontSize = 17.0f;
+    float fontSize = 14.0f;
     if ([[UIDevice currentDevice] userInterfaceIdiom]
         == UIUserInterfaceIdiomPhone)
     {
-        fontSize = 12.0f;
+        fontSize = 10.0f;
     }
 
-    cell.textLabel.text = [_downlinkStats objectForKey:userId];
+    User* user = [_users objectForKey:userId];
+
+    cell.textLabel.text = 
+      [NSString stringWithFormat:@"User %@: %@ %@", 
+		userId, 
+		(![user.statsAudio length]) ? @"[No Audio]" : user.statsAudio,
+		(![user.statsVideo length]) ? @"[No Video]" : user.statsVideo];
     cell.textLabel.textAlignment = UITextAlignmentCenter;
     cell.textLabel.textColor = [UIColor whiteColor];
     cell.textLabel.font = [[UIFont class] systemFontOfSize:fontSize];
-    
+    cell.textLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    cell.textLabel.numberOfLines = 2;
+
     return cell;
+}
+
+- (NSIndexPath*) tableView:(UITableView*) tableView
+willSelectRowAtIndexPath:(NSIndexPath*) indexPath
+{
+    NSNumber* uId = [_downlinkStatsRow objectAtIndex:indexPath.row];
+    if (! uId)
+      return nil;
+
+    User* user = [_users objectForKey:uId];
+    if (! user)
+      return nil;
+
+    return indexPath;
+}
+
+- (void) tableView:(UITableView*) tableView
+didSelectRowAtIndexPath:(NSIndexPath*) indexPath
+{
+    NSNumber* uId = [_downlinkStatsRow objectAtIndex:indexPath.row];
+    User* user = [_users objectForKey:uId];
+
+    // switch to new video feed
+    if (self.viewVideo1.videoSinkId)
+    {
+        [_videoSinkToVideoView removeObjectForKey:self.viewVideo1.videoSinkId];
+    }
+
+    NSString* sinkId = user.videoSinkId;
+
+    if ([user.screenSinkId length]) // always prefer screen
+      sinkId = user.screenSinkId;
+
+    [_videoSinkToVideoView setObject:self.viewVideo1
+			      forKey:sinkId];
+    [self.viewVideo1 addRenderer:sinkId];
+	    
+    // update allowed senders
+    NSArray* uIds = [NSArray arrayWithObject:uId];
+
+    ALResponder* responder =
+      [[[ALResponder alloc]
+		   initWithSelector:@selector(onSetAllowedSenders:)
+			 withObject:self]
+	autorelease];
+    
+    [_service setAllowedSenders:[self scopeId] 
+			userIds:uIds
+		      responder:responder];
 }
 
 // reachability
@@ -1092,6 +2019,7 @@ clickedButtonAtIndex: (NSInteger) buttonIndex
                          stringWithFormat:@"Connection changed to %@",
                          [Reachability stringNetworkStatus:status]];
 
+    [_alert release];
     _alert =
         [[UIAlertView alloc] initWithTitle: @"Connection"
          message: message
@@ -1099,11 +2027,11 @@ clickedButtonAtIndex: (NSInteger) buttonIndex
          cancelButtonTitle: @"OK"
          otherButtonTitles: nil];
     [_alert show];
-    [_alert release];
     
     _networkStatus = status;
 
-    // TODO
+    if (_networkStatus != NotReachable)
+        [self reconnect];
 }
 
 @end

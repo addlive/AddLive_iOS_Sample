@@ -9,26 +9,44 @@
 #import <UIKit/UIKit.h>
 #import <MessageUI/MFMailComposeViewController.h>
 
-@interface CdoViewController : UIViewController
-<UIActionSheetDelegate, MFMailComposeViewControllerDelegate>
+#import "AddLive/AddLiveAPI.h"
 
+@interface CdoViewController : UIViewController
+
+<UIActionSheetDelegate,
+ MFMailComposeViewControllerDelegate,
+ UITableViewDelegate, UITableViewDataSource,
+ ALServiceListener>
+
+@property (assign) IBOutlet UIScrollView *scrollView;
+@property (assign) IBOutlet UIView *contentView;
 @property (assign) IBOutlet UIButton *buttonConnectDisconnect;
+@property (assign) IBOutlet UISwitch *switchSpeaker;
+@property (assign) IBOutlet UISwitch *switchPublishVideo;
+@property (assign) IBOutlet UISwitch *switchPublishAudio;
 @property (assign) IBOutlet UILabel *labelStatus;
 @property (assign) IBOutlet UITextField *textFieldURL;
 @property (assign) IBOutlet UILabel *labelUplinkStats;
-@property (assign) IBOutlet UIButton *buttonAec;
 @property (assign) IBOutlet UIButton *buttonNs;
-@property (assign) IBOutlet UIButton *buttonAgc;
+@property (assign) IBOutlet UIButton *buttonCamera;
 @property (assign) IBOutlet UITableView *tableViewDownlinkStats;
+@property (assign) IBOutlet ALVideoView *viewVideo0;
+@property (assign) IBOutlet ALVideoView *viewVideo1;
 
 - (IBAction) onConnectDisconnect;
+- (IBAction) onPublishVideo;
+- (IBAction) onPublishAudio;
 - (IBAction) onLogs;
 - (IBAction) onKill;
 - (IBAction) onSpeaker;
-- (IBAction) onAEC:(id) sender;
-- (IBAction) onNS:(id) sender;
-- (IBAction) onAGC:(id) sender;
+- (IBAction) onNS;
+- (IBAction) onCamera;
+- (IBAction) onSwipeLeft;
+- (IBAction) onSwipeRight;
 
-- (void) resume;
+- (void) becomeActive;
+- (void) resignActive;
+- (void) enterForeground;
+- (void) enterBackground;
 
 @end
