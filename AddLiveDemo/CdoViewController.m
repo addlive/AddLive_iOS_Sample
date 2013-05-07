@@ -552,22 +552,14 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
 - (void) becomeActive
 {
-    // resume paused video renderers
-    for (NSString* sinkId in _videoSinkToVideoView)
-    {	
-	ALVideoView* videoView = [_videoSinkToVideoView objectForKey:sinkId];
-	[videoView resume];
-    }
+    [self.viewVideo0 resume];
+    [self.viewVideo1 resume];
 }
 
 - (void) resignActive
 {
-    // pause video renderers
-    for (NSString* sinkId in _videoSinkToVideoView)
-    {	
-        ALVideoView* videoView = [_videoSinkToVideoView objectForKey:sinkId];
-	[videoView pause];
-    }  
+    [self.viewVideo0 pause];
+    [self.viewVideo1 pause];    
 }
 
 // called from application delegate when app goes into foreground
@@ -1206,9 +1198,10 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     NSLog(@"[%@] connection type: %@", event.mediaType, event.connectionType);
 }
 
-- (void) mediaConnHealthChanged:(ALMediaConnHealthChangedEvent*) event
+- (void) mediaIssue:(ALMediaIssueEvent*) event
 {
-    NSLog(@"[%@] connection health: %@", event.mediaType, event.healthStatus);
+    NSLog(@"[%@] media issue: %@ : %@", event.mediaType, event.issueType,
+	  event.msg);
 }
 
 - (void) mediaInterrupt:(ALMediaInterruptEvent*) event
