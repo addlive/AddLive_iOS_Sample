@@ -63,6 +63,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
         DISCONNECTED,
         CONNECTED,
         ONHOLD,
+        LOST_CONNECTION,
     };
 
     enum Sheet
@@ -828,7 +829,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 {
     NSLog(@"onReconnect");
 
-    if (err) // error
+    if (err && err.err_code != kLogicInvalidScope) // error
     {
         [self unlockUI:YES];
 
@@ -1072,20 +1073,25 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 {
     NSLog(@"connectionLost");
 
-    _state = DISCONNECTED;
-
-    [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
-    
     [labelStatus setText:[NSString stringWithFormat:@"ERROR %d: %@",
-                          event.errCode, event.errMessage]];
+				   event.errCode, event.errMessage]];
     labelStatus.textColor = [UIColor redColor];   
 
-    [buttonConnectDisconnect
-     setTitle:@"Connect" forState:UIControlStateNormal];
+    if (event.errCode != kCommRemoteEndDied)
+    {
+        _state = DISCONNECTED;
 
-    [self cleanUpAfterDisconnect];
+	[[UIApplication sharedApplication] setIdleTimerDisabled:NO];
+    
+	[buttonConnectDisconnect
+	  setTitle:@"Connect" forState:UIControlStateNormal];
 
-    [self unlockUI:YES];
+	[self cleanUpAfterDisconnect];
+
+	[self unlockUI:YES];
+    }
+    else
+      _state = LOST_CONNECTION;
 }
 
 - (void) userEvent:(ALUserStateChangedEvent*) event
@@ -1266,6 +1272,10 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     {
         [self showBusy:@"Connecting ..."];
     }
+    else if (_state == LOST_CONNECTION)
+    {
+        [self showBusy:@"Reconnecting ..."];
+    }
 
     // prepare connection descriptor
     ALConnectionDescriptor* desc = 
@@ -1339,7 +1349,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
         return;
     }
 
-    if (_state != CONNECTED)
+    if (_state != CONNECTED && _state != LOST_CONNECTION)
     {
         return;
     }
