@@ -317,6 +317,11 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 // called when connect/disconnect was pressed
 - (IBAction) onConnectDisconnect
 {
+    if (_state == INIT)
+    {
+       return;	
+    }
+
     if (_state == DISCONNECTED || _state == ONHOLD)
     {
         [self connect];
