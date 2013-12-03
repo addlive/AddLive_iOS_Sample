@@ -11,7 +11,7 @@
 
 #import "AddLive/AddLiveAPI.h"
 
-@interface CdoViewController : UIViewController
+@interface ALViewController : UIViewController
 
 <UIActionSheetDelegate,
  MFMailComposeViewControllerDelegate,

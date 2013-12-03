@@ -8,11 +8,11 @@
 
 #import <UIKit/UIKit.h>
 
-@class CdoViewController;
+@class ALViewController;
 
-@interface CdoAppDelegate : UIResponder <UIApplicationDelegate>
+@interface ALAppDelegate : UIResponder <UIApplicationDelegate>
 
 @property (strong, nonatomic) UIWindow *window;
-@property (strong, nonatomic) CdoViewController *viewController;
+@property (strong, nonatomic) ALViewController *viewController;
 
 @end

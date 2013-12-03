@@ -6,10 +6,10 @@
  * permission is hereby prohibited.
  */
 
-#import "CdoAppDelegate.h"
-#import "CdoViewController.h"
+#import "ALAppDelegate.h"
+#import "ALViewController.h"
 
-@implementation CdoAppDelegate
+@implementation ALAppDelegate
 
 - (BOOL)application:(UIApplication *)application
 didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
@@ -25,14 +25,14 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
     if ([[UIDevice currentDevice] userInterfaceIdiom]
         == UIUserInterfaceIdiomPhone)
     {
-        self.viewController = [[[CdoViewController alloc]
+        self.viewController = [[[ALViewController alloc]
                                 initWithNibName:@"CdoViewController_iPhone" 
 					 bundle:nil]
                                autorelease];        
     }
     else
     {
-        self.viewController = [[[CdoViewController alloc]
+        self.viewController = [[[ALViewController alloc]
                                 initWithNibName:@"CdoViewController_iPad" 
 					 bundle:nil]
                                autorelease];

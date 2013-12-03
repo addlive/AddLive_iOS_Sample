@@ -6,7 +6,7 @@
  * permission is hereby prohibited.
  */
 
-#import "CdoViewController.h"
+#import "ALViewController.h"
 #import "Reachability.h"
 
 #include <asl.h>
@@ -20,8 +20,8 @@ NSString* LOG_FILE_TEMPLATE = @"log.XXXXXX";
 NSString* LOG_FILE_EMAIL = @"log.txt";
 char* LOG_KEY_SENDER = "AddLive_SDK";
 
-int AL_SAMPLE_APP_ID = 1;
-NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
+int AL_SAMPLE_APP_ID = -1;  // TODO change me
+NSString* AL_SAMPLE_KEY = @""; // TODO change me
 
 //
 
@@ -54,7 +54,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
 //
 
-@interface CdoViewController ()
+@interface ALViewController ()
 
 {
     enum State
@@ -146,7 +146,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
 @end
 
-@implementation CdoViewController
+@implementation ALViewController
 
 @synthesize scrollView;
 @synthesize contentView;
@@ -257,13 +257,12 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     [self showBusy:@"Initializing ..."];
 
     // initialize AddLive API. API calls back to onInitPlatform
-    _service = [[ALService alloc] 
-		 initWithAppId:[NSNumber numberWithInt:AL_SAMPLE_APP_ID]
-			appKey:AL_SAMPLE_KEY
-		];
+    _service = [[ALService alloc] init];
 
     ALInitOptions* options = [[[ALInitOptions alloc] init] autorelease];
-
+    options.applicationId = [NSNumber numberWithInt:AL_SAMPLE_APP_ID];
+    options.apiKey = AL_SAMPLE_KEY;
+    
     ALResponder* responder =
       [[[ALResponder alloc] 
 	 initWithSelector:@selector(onInitPlatform:) withObject:self] 
@@ -414,7 +413,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     // write log to temp. file
     
     char* cfilename =
-        [CdoViewController createTempFilename:LOG_FILE_TEMPLATE];
+        [ALViewController createTempFilename:LOG_FILE_TEMPLATE];
     
     int fd = mkstemp(cfilename);
     if (fd < 0)
@@ -434,7 +433,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
                         initWithFileDescriptor:fd
                         closeOnDealloc:YES];
 
-    [CdoViewController writeLog:fh];
+    [ALViewController writeLog:fh];
 
     // attach file to email
 
@@ -558,14 +557,14 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
 - (void) becomeActive
 {
-    [self.viewVideo0 resume];
-    [self.viewVideo1 resume];
+    [self.viewVideo0 start:nil];
+    [self.viewVideo1 start:nil];
 }
 
 - (void) resignActive
 {
-    [self.viewVideo0 pause];
-    [self.viewVideo1 pause];    
+    [self.viewVideo0 stop:nil];
+    [self.viewVideo1 stop:nil];
 }
 
 // called from application delegate when app goes into foreground
@@ -643,11 +642,6 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     }
     else
     {
-        // setup video views
-        self.viewVideo0.service = _service; // local video
-	self.viewVideo0.mirror  = YES;
-	self.viewVideo1.service = _service; // remote video
-	self.viewVideo1.mirror  = NO;
 
 	// set service listeners
 	ALResponder* respAddServiceListener =
@@ -735,6 +729,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
     if (err) // error
     {
+        NSLog(@"Failed to connect ot streamer: %@", err);
         _state = DISCONNECTED;
 
 	if ((err.err_code == kCommInvalidHost) && (_connectAttempts < 3))
@@ -929,9 +924,12 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     else
     {
         NSLog(@"capturing into video sink %@", videoSinkId);
-
-	[_videoSinkToVideoView setObject:self.viewVideo0 forKey:videoSinkId];
-	[self.viewVideo0 addRenderer:videoSinkId];
+        [_videoSinkToVideoView setObject:self.viewVideo0 forKey:videoSinkId];
+        ResultBlock onStopped = ^(ALError* err, id nothing) {
+            [self.viewVideo0 setupWithService:_service withSink:videoSinkId withMirror:YES];
+            [self.viewVideo0 start:nil];
+        };
+        [self.viewVideo0 stop:[ALResponder responderWithBlock:onStopped]];
     }
 }
 
@@ -946,9 +944,8 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     else
     {
         NSLog(@"Success");
-
-	[_videoSinkToVideoView removeObjectForKey:self.viewVideo0.videoSinkId];
-	[self.viewVideo0 removeRenderer];
+        [_videoSinkToVideoView removeObjectForKey:self.viewVideo0.sinkId];
+        [self.viewVideo0 stop:nil];
     }
 }
 
@@ -1067,11 +1064,6 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 {
     NSLog(@"videoFrameSizeChanged: %@ -> (%d x %d)", event.sinkId, 
 	  event.width, event.height);
-
-    id obj = [_videoSinkToVideoView objectForKey:event.sinkId];
-    if (obj)
-        [obj resolutionChanged:event.width
-			height:event.height];
 }
 
 - (void) connectionLost:(ALConnectionLostEvent*) event
@@ -1157,8 +1149,8 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 	[_users removeObjectForKey:[NSNumber numberWithLongLong:
 					       event.userId]];
 
-        if ([self.viewVideo1.videoSinkId isEqual:user.videoSinkId] ||
-	    [self.viewVideo1.videoSinkId isEqual:user.screenSinkId])
+        if ([self.viewVideo1.sinkId isEqual:user.videoSinkId] ||
+	    [self.viewVideo1.sinkId isEqual:user.screenSinkId])
 	{
 	    [self selectVideo:nil];
 	}
@@ -1577,11 +1569,11 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
     [buttonConnectDisconnect
      setTitle:@"Connect" forState:UIControlStateNormal];
 
-    if (self.viewVideo1.videoSinkId)
+    if (self.viewVideo1.sinkId)
     {
-        [_videoSinkToVideoView removeObjectForKey:self.viewVideo1.videoSinkId];
+        [_videoSinkToVideoView removeObjectForKey:self.viewVideo1.sinkId];
     }
-    [self.viewVideo1 removeRenderer];
+    [self.viewVideo1 stop:nil];
 
     [labelUplinkStats setText:@"Uplink Stats"];
 
@@ -1621,8 +1613,8 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
         if (userId == nil)
 	{
 	    [_videoSinkToVideoView removeObjectForKey:
-				     self.viewVideo1.videoSinkId];
-	    [self.viewVideo1 removeRenderer];
+				     self.viewVideo1.sinkId];
+	    [self.viewVideo1 stop:nil];
 
 	    return;
 	}
@@ -1661,7 +1653,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
 	[self reloadDownlinkStats];
 
-        if ([self.viewVideo1.videoSinkId isEqual:screenSinkId])
+        if ([self.viewVideo1.sinkId isEqual:screenSinkId])
 	{
 	    [self selectVideo:nil];
 	}
@@ -1710,7 +1702,7 @@ NSString* AL_SAMPLE_KEY = @"CloudeoTestAccountSecret";
 
 	[self reloadDownlinkStats];
 
-        if ([self.viewVideo1.videoSinkId isEqual:videoSinkId])
+        if ([self.viewVideo1.sinkId isEqual:videoSinkId])
 	{
 	    [self selectVideo:nil];
 	}
@@ -1983,9 +1975,9 @@ didSelectRowAtIndexPath:(NSIndexPath*) indexPath
     User* user = [_users objectForKey:uId];
 
     // switch to new video feed
-    if (self.viewVideo1.videoSinkId)
+    if (self.viewVideo1.sinkId)
     {
-        [_videoSinkToVideoView removeObjectForKey:self.viewVideo1.videoSinkId];
+        [_videoSinkToVideoView removeObjectForKey:self.viewVideo1.sinkId];
     }
 
     NSString* sinkId = user.videoSinkId;
@@ -1995,8 +1987,12 @@ didSelectRowAtIndexPath:(NSIndexPath*) indexPath
 
     [_videoSinkToVideoView setObject:self.viewVideo1
 			      forKey:sinkId];
-    [self.viewVideo1 addRenderer:sinkId];
-	    
+    ResultBlock onStopped = ^(ALError* err, id nothing) {
+        [self.viewVideo1 setupWithService:_service withSink:sinkId];
+        [self.viewVideo1 start:nil];
+	};
+    [self.viewVideo1 stop:[ALResponder responderWithBlock:onStopped]];
+    
     // update allowed senders
     NSArray* uIds = [NSArray arrayWithObject:uId];
 
@@ -2006,9 +2002,10 @@ didSelectRowAtIndexPath:(NSIndexPath*) indexPath
 			 withObject:self]
 	autorelease];
     
-    [_service setAllowedSenders:[self scopeId] 
-			userIds:uIds
-		      responder:responder];
+    [_service setAllowedSenders:[self scopeId]
+                      mediaType:ALMediaType.kVideo
+                        userIds:uIds
+                      responder:responder];
 }
 
 // reachability
